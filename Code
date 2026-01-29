@@ -1,0 +1,539 @@
+INCLUDE C:\Irvine\Irvine32.inc
+INCLUDELIB C:\Irvine\Irvine32.lib
+INCLUDELIB C:\Irvine\kernel32.lib
+INCLUDELIB C:\Irvine\user32.lib
+
+ExitProcess PROTO, dwExitCode:DWORD
+
+.data
+    grid_actual BYTE 256 DUP(0)  ; Initialize with 0
+    dictionary BYTE "COMPUTER",0,"PROGRAM",0,"ASSEMBLY",0,"LANGUAGE",0
+               BYTE "ALGORITHM",0,"DATA",0,"NETWORK",0,"SOFTWARE",0
+               BYTE "HARDWARE",0,"KEY",0,"MONITOR",0,"MEMORY",0
+               BYTE "STORAGE",0,"PROCESSOR",0,"BOARD",0,"GRAPHIC",0
+               BYTE "INTERNET",0,"WEB",0,"BROWSER",0,"DOWNLOAD",0
+               BYTE "UPLOAD",0,"VIRUS",0,"FIREWALL",0,"PASSWORD",0
+               BYTE "USER",0,"SECURITY",0,"BINARY",0,"HEX",0,"VARIABLE",0
+               BYTE "CONSTANT",0,"FUNCTION",0,"LOOP",0,"POINTER",0
+               BYTE "REGISTER",0,"CODE",0,"DEBUG",0,"SYNTAX",0,"ERROR",0
+               BYTE "BUG",0,"TEST",0,"FILE",0,"MENU",0,"WINDOW",0
+               BYTE "MOUSE",0,"CLICK",0,"COPY",0,"PASTE",0,"CUT",0
+               BYTE "SAVE",0,"OPEN",0,"CLOSE",0,"NEW",0,"OLD",0
+               BYTE "BIG",0,"SMALL",0,"FAST",0,"SLOW",0,"HOT",0,"COLD",0
+               BYTE "YES",0,"NO",0,"OK",0,0
+    
+    vowels BYTE "AEIOU"
+    consonants BYTE "BCDFGHJKLMNPQRSTVWXYZ"
+    
+    quit_cmd BYTE "QUIT",0
+    title_msg BYTE "===== WORD HUNT GAME (16x16) =====",0Dh,0Ah,0
+    grid_msg BYTE 0Dh,0Ah,"16x16 Game Grid:",0Dh,0Ah,0
+    instructions BYTE "Rules:",0Dh,0Ah
+                 BYTE "1. Find words from the dictionary in the grid",0Dh,0Ah
+                 BYTE "2. Words are placed horizontally",0Dh,0Ah
+                 BYTE "3. Type 'QUIT' to end game",0Dh,0Ah
+                 BYTE "Scoring: 3=3pts, 4=5pts, 5=7pts, 6=10pts, 7+=len*2",0Dh,0Ah,0
+    prompt_msg BYTE 0Dh,0Ah,"Enter word: ",0
+    valid_msg BYTE " -> Valid! +",0
+    invalid_msg BYTE " -> Not in Dictionary!",0Dh,0Ah,0
+    invalid_grid_msg BYTE " -> Word not in grid!",0Dh,0Ah,0
+    duplicate_msg BYTE " -> Already used!",0Dh,0Ah,0
+    too_short_msg BYTE " -> Too short! Min 3 letters.",0Dh,0Ah,0
+    score_msg BYTE 0Dh,0Ah,"Score: ",0
+    time_msg BYTE "Time Remaining: ",0
+    words_msg BYTE " | Words Found: ",0
+    final_score BYTE 0Dh,0Ah,0Dh,0Ah,"===== GAME OVER =====",0Dh,0Ah,0
+    words_found_msg BYTE "Total Words Found: ",0
+    points_str BYTE " pts",0
+    newline BYTE 0Dh,0Ah,0
+    dash_line BYTE "----------------------------------------",0Dh,0Ah,0
+    
+    score DWORD 0
+    words_found_count DWORD 0
+    start_time DWORD 0
+    game_time DWORD 300 ; 5 minutes
+    
+    player_words BYTE 5000 DUP(0)
+    input_buffer BYTE 25 DUP(0)
+    input_len DWORD 0
+    temp_char BYTE 0
+    visited BYTE 256 DUP(0)
+    
+    row_size = 16
+
+.code
+main PROC
+    call Randomize
+    call generate_grid
+    
+    mov edx, OFFSET title_msg
+    call WriteString
+    mov edx, OFFSET instructions
+    call WriteString
+    
+    call GetMSeconds
+    mov start_time, eax
+
+game_loop:
+    call display_grid
+    call display_status
+    
+    mov edx, OFFSET prompt_msg
+    call WriteString
+    
+    mov edx, OFFSET input_buffer
+    mov ecx, SIZEOF input_buffer - 1
+    call ReadString
+    mov input_len, eax
+    
+    ; Check if empty input
+    cmp eax, 0
+    je check_time_jump
+
+    call convert_upper
+    
+    call check_quit
+    cmp al, 1
+    je game_over
+    
+    mov eax, input_len
+    cmp eax, 3
+    jl too_short
+    
+    call find_in_dict
+    cmp al, 0
+    je invalid_word
+    
+    call check_duplicate
+    cmp al, 1
+    je duplicate_word
+    
+    call check_in_grid
+    cmp al, 0
+    je not_in_grid
+    
+    ; If all checks pass
+    call calc_score
+    add score, eax
+    
+    mov edx, OFFSET valid_msg
+    call WriteString
+    call WriteDec
+    mov edx, OFFSET points_str
+    call WriteString
+    call Crlf
+    
+    call save_word
+    inc words_found_count
+    jmp check_time_jump
+
+too_short:
+    mov edx, OFFSET too_short_msg
+    call WriteString
+    jmp check_time_jump
+invalid_word:
+    mov edx, OFFSET invalid_msg
+    call WriteString
+    jmp check_time_jump
+not_in_grid:
+    mov edx, OFFSET invalid_grid_msg
+    call WriteString
+    jmp check_time_jump
+duplicate_word:
+    mov edx, OFFSET duplicate_msg
+    call WriteString
+
+check_time_jump:
+    call GetMSeconds
+    sub eax, start_time
+    mov edx, 0
+    mov ebx, 1000
+    div ebx
+    cmp eax, game_time
+    jge game_over
+    jmp game_loop
+
+game_over:
+    mov edx, OFFSET final_score
+    call WriteString
+    mov edx, OFFSET score_msg
+    call WriteString
+    mov eax, score
+    call WriteDec
+    call Crlf
+    mov edx, OFFSET words_found_msg
+    call WriteString
+    mov eax, words_found_count
+    call WriteDec
+    call Crlf
+    call show_words
+    call WaitMsg
+    INVOKE ExitProcess, 0
+main ENDP
+
+; --- Grid Generation Logic Fixed ---
+generate_grid PROC
+    pushad
+    
+    ; Step 1: Clear grid
+    mov edi, OFFSET grid_actual
+    mov ecx, 256
+    mov al, 0
+    rep stosb
+
+    ; Step 2: Place words from dictionary
+    mov esi, OFFSET dictionary
+place_loop:
+    cmp BYTE PTR [esi], 0
+    je filling_done
+    
+    ; Calculate word length
+    mov ecx, 0
+L_len:
+    cmp BYTE PTR [esi + ecx], 0
+    je L_len_done
+    inc ecx
+    jmp L_len
+L_len_done:
+
+    ; Try to place word horizontally at random position
+    push ecx
+    mov eax, 16
+    sub eax, ecx ; Max starting column
+    call RandomRange
+    mov ebx, eax ; Random Col
+    
+    mov eax, 16
+    call RandomRange ; Random Row
+    mov edx, 16
+    mul edx
+    add eax, ebx ; EAX = Random Index
+    
+    mov edi, OFFSET grid_actual
+    add edi, eax
+    pop ecx
+    
+    ; Check if space is clear
+    push edi
+    push ecx
+    mov al, 0
+check_space:
+    cmp BYTE PTR [edi], 0
+    jne space_occupied
+    inc edi
+    loop check_space
+    pop ecx
+    pop edi
+    
+    ; Place word
+    push esi
+    push ecx
+copy_word:
+    mov al, [esi]
+    mov [edi], al
+    inc esi
+    inc edi
+    loop copy_word
+    pop ecx
+    pop esi
+    jmp next_dict_word
+
+space_occupied:
+    pop ecx
+    pop edi
+next_dict_word:
+    add esi, ecx
+    inc esi
+    jmp place_loop
+
+filling_done:
+    ; Step 3: Fill empty spaces with random letters
+    mov edi, OFFSET grid_actual
+    mov ecx, 256
+final_fill:
+    cmp BYTE PTR [edi], 0
+    jne skip_fill
+    
+    ; Randomly pick Vowel (30%) or Consonant (70%)
+    mov eax, 100
+    call RandomRange
+    cmp eax, 30
+    jl fill_vowel
+    
+    mov eax, 21
+    call RandomRange
+    mov bl, consonants[eax]
+    mov [edi], bl
+    jmp skip_fill
+fill_vowel:
+    mov eax, 5
+    call RandomRange
+    mov bl, vowels[eax]
+    mov [edi], bl
+
+skip_fill:
+    inc edi
+    loop final_fill
+    
+    popad
+    ret
+generate_grid ENDP
+
+display_grid PROC
+    pushad
+    mov edx, OFFSET grid_msg
+    call WriteString
+    mov edx, OFFSET dash_line
+    call WriteString
+    
+    mov esi, OFFSET grid_actual
+    mov ecx, 16
+L_row:
+    push ecx
+    mov ecx, 16
+L_col:
+    mov al, [esi]
+    call WriteChar
+    mov al, ' '
+    call WriteChar
+    inc esi
+    loop L_col
+    call Crlf
+    pop ecx
+    loop L_row
+    mov edx, OFFSET dash_line
+    call WriteString
+    popad
+    ret
+display_grid ENDP
+
+display_status PROC
+    pushad
+    mov edx, OFFSET time_msg
+    call WriteString
+    call GetMSeconds
+    sub eax, start_time
+    mov edx, 0
+    mov ebx, 1000
+    div ebx
+    mov ebx, game_time
+    sub ebx, eax
+    mov eax, ebx
+    call WriteDec
+    mov al, 's'
+    call WriteChar
+    
+    mov edx, OFFSET score_msg
+    call WriteString
+    mov eax, score
+    call WriteDec
+    
+    mov edx, OFFSET words_msg
+    call WriteString
+    mov eax, words_found_count
+    call WriteDec
+    call Crlf
+    popad
+    ret
+display_status ENDP
+
+convert_upper PROC
+    pushad
+    mov esi, OFFSET input_buffer
+    mov ecx, input_len
+L1:
+    mov al, [esi]
+    cmp al, 'a'
+    jb L2
+    cmp al, 'z'
+    ja L2
+    sub al, 32
+    mov [esi], al
+L2: inc esi
+    loop L1
+    popad
+    ret
+convert_upper ENDP
+
+check_quit PROC
+    mov esi, OFFSET input_buffer
+    mov edi, OFFSET quit_cmd
+    mov ecx, 5
+    repe cmpsb
+    jne not_quit
+    mov al, 1
+    ret
+not_quit:
+    mov al, 0
+    ret
+check_quit ENDP
+
+find_in_dict PROC
+    push esi
+    push edi
+    mov edi, OFFSET dictionary
+L_search:
+    cmp BYTE PTR [edi], 0
+    je L_not_found
+    mov esi, OFFSET input_buffer
+    push edi
+L_compare:
+    mov al, [esi]
+    mov bl, [edi]
+    cmp al, 0
+    je L_check_end
+    cmp al, bl
+    jne L_next_word
+    inc esi
+    inc edi
+    jmp L_compare
+L_check_end:
+    cmp bl, 0
+    je L_found
+L_next_word:
+    pop edi
+L_skip:
+    cmp BYTE PTR [edi], 0
+    je L_inc_and_loop
+    inc edi
+    jmp L_skip
+L_inc_and_loop:
+    inc edi
+    jmp L_search
+L_found:
+    pop edi
+    mov al, 1
+    jmp L_done
+L_not_found:
+    mov al, 0
+L_done:
+    pop edi
+    pop esi
+    ret
+find_in_dict ENDP
+
+check_in_grid PROC
+    ; Simple horizontal search for demo
+    pushad
+    mov ecx, 256
+    mov esi, OFFSET grid_actual
+L_grid_search:
+    push esi
+    mov edi, OFFSET input_buffer
+    mov edx, input_len
+L_match:
+    mov al, [esi]
+    cmp al, [edi]
+    jne L_no_match
+    inc esi
+    inc edi
+    dec edx
+    jz L_grid_found
+    jmp L_match
+L_no_match:
+    pop esi
+    inc esi
+    loop L_grid_search
+    mov temp_char, 0
+    jmp L_grid_done
+L_grid_found:
+    pop esi
+    mov temp_char, 1
+L_grid_done:
+    popad
+    mov al, temp_char
+    ret
+check_in_grid ENDP
+
+check_duplicate PROC
+    pushad
+    mov ecx, words_found_count
+    cmp ecx, 0
+    je L_not_dup
+    mov esi, OFFSET player_words
+L_dup_loop:
+    push esi
+    mov edi, OFFSET input_buffer
+L_dup_cmp:
+    mov al, [esi]
+    mov bl, [edi]
+    cmp al, bl
+    jne L_dup_next
+    cmp al, 0
+    je L_is_dup
+    inc esi
+    inc edi
+    jmp L_dup_cmp
+L_dup_next:
+    pop esi
+    add esi, 25
+    loop L_dup_loop
+L_not_dup:
+    popad
+    mov al, 0
+    ret
+L_is_dup:
+    pop esi
+    popad
+    mov al, 1
+    ret
+check_duplicate ENDP
+
+calc_score PROC
+    mov eax, input_len
+    cmp eax, 3
+    je s3
+    cmp eax, 4
+    je s4
+    cmp eax, 5
+    je s5
+    cmp eax, 6
+    je s6
+    shl eax, 1
+    ret
+s3: mov eax, 3
+    ret
+s4: mov eax, 5
+    ret
+s5: mov eax, 7
+    ret
+s6: mov eax, 10
+    ret
+calc_score ENDP
+
+save_word PROC
+    pushad
+    mov eax, words_found_count
+    mov ebx, 25
+    mul ebx
+    mov edi, OFFSET player_words
+    add edi, eax
+    mov esi, OFFSET input_buffer
+    mov ecx, input_len
+    rep movsb
+    mov BYTE PTR [edi], 0
+    popad
+    ret
+save_word ENDP
+
+show_words PROC
+    pushad
+    mov ecx, words_found_count
+    cmp ecx, 0
+    je L_none
+    mov esi, OFFSET player_words
+    mov edx, OFFSET words_found_msg
+    call WriteString
+    call Crlf
+L_show:
+    mov edx, esi
+    call WriteString
+    call Crlf
+    add esi, 25
+    loop L_show
+L_none:
+    popad
+    ret
+show_words ENDP
+
+END main
